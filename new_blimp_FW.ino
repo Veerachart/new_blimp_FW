@@ -52,7 +52,7 @@ float accelScale, gyroScale;
 float accelRange, gyroRange;
 
 // PID for yaw
-float Kp = 0.0004, Ki = 0., Kd = 0.05;
+float Kp = 1.8, Ki = 0., Kd = 1.5;
 float plant_state;
 int control_effort;
 float setpoint = 0.;
@@ -124,15 +124,12 @@ void get_control_effort(float yaw) {
   plant_state = yaw;
   error[2] = error[1];
   error[1] = error[0];
-  error[0] = setpoint - plant_state;
-
-  while (error[0] <= -angle_wrap/2.0)
-    error[0] += angle_wrap;
-  while (error[0] > angle_wrap/2.0)
-    error[0] -= angle_wrap;
-  //error[2] = 0.;
-  //error[1] = 0.;
-  //error_integral = 0.;        // Still feel weird here
+  filtered_error[2] = filtered_error[1];
+  filtered_error[1] = filtered_error[0];
+  error_deriv[2] = error_deriv[1];
+  error_deriv[1] = error_deriv[0];
+  filtered_error_deriv[2] = filtered_error_deriv[1];
+  filtered_error_deriv[1] = filtered_error_deriv[0];
 
   if (microsPrevious_pid != 0) {    // Not the first time
     unsigned long t_now = micros();
@@ -145,23 +142,55 @@ void get_control_effort(float yaw) {
     microsPrevious_pid = micros();
     return;
   }
+  
+  error[0] = setpoint - plant_state;
+
+  while (error[0] <= -angle_wrap/2.0) {
+    error[0] += angle_wrap;
+    //error[1] = 0.;
+    //error[2] = 0.;
+  }
+  while (error[0] > angle_wrap/2.0) {
+    error[0] -= angle_wrap;
+    //error[1] = 0.;
+    //error[2] = 0.;
+  }
+  if (fabs(error[0] - error[1]) > angle_wrap/2.0) {
+    // The error cross the line opposite to the setpoint
+    Serial.println("Reset");
+    // filter
+    if(error[0] > error[1]) {
+      error_deriv[0] = (error[0] - error[1] - angle_wrap)/delta_t * 1.0e6;
+    }
+    else {
+      error_deriv[0] = (error[0] - error[1] + angle_wrap)/delta_t * 1.0e6;
+    }
+    error[1] = 0;
+    error[2] = 0;
+    error_deriv[2] = 0;
+    error_deriv[1] = 0;
+    filtered_error[2] = 0;
+    filtered_error[1] = 0;
+    filtered_error_deriv[2] = 0;
+    filtered_error_deriv[1] = 0;
+    error_integral = 0;
+
+    filtered_error[0] = (1/3.414)*(error[2]+2*error[1]+error[0]-(0.586)*filtered_error[2]);
+    filtered_error_deriv[0] = (1/(3.414))*(error_deriv[2]+2*error_deriv[1]+error_deriv[0]-(0.586)*filtered_error_deriv[2]);
+  }
+  else {
+    filtered_error[0] = (1/3.414)*(error[2]+2*error[1]+error[0]-(0.586)*filtered_error[2]);
+    error_deriv[0] = (error[0] - error[1])/delta_t * 1.0e6;
+    filtered_error_deriv[0] = (1/(3.414))*(error_deriv[2]+2*error_deriv[1]+error_deriv[0]-(0.586)*filtered_error_deriv[2]);
+  }
+  //error[2] = 0.;
+  //error[1] = 0.;
+  //error_integral = 0.;        // Still feel weird here
 
   error_integral += error[0] * delta_t*1.0e-6;   // microsec
   error_integral = min(max(error_integral, -windup_limit), windup_limit);
 
-  // filter
-  filtered_error[2] = filtered_error[1];
-  filtered_error[1] = filtered_error[0];
-  filtered_error[0] = (1/3.414)*(error[2]+2*error[1]+error[0]-(0.586)*filtered_error[2]);
-
-  error_deriv[2] = error_deriv[1];
-  error_deriv[1] = error_deriv[0];
-  error_deriv[0] = (error[0] - error[1])/delta_t * 1.0e6;
-
-  filtered_error_deriv[2] = filtered_error_deriv[1];
-  filtered_error_deriv[1] = filtered_error_deriv[0];
-  filtered_error_deriv[0] = (1/(3.414))*(error_deriv[2]+2*error_deriv[1]+error_deriv[0]-(0.586)*filtered_error_deriv[2]);
-
+  
   // Control effort
   P = Kp * filtered_error[0];
   I = Ki * error_integral;
@@ -170,7 +199,13 @@ void get_control_effort(float yaw) {
   
   temp_control = min(max(temp_control, lower_limit), upper_limit);
   control_effort = round(temp_control);
-  Serial.println(control_effort);
+  //Serial.print(yaw);
+  //Serial.print(":\t");
+  //Serial.print(P);
+  //Serial.print(" ");
+  //Serial.print(D);
+  //Serial.print(" ");
+  Serial.println(temp_control);
 
   powers[0] = max(min(-commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
   powers[1] = max(min(commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
