@@ -6,7 +6,7 @@
 
 #define CURETIMER_USED 0
 #define NOINTERRUPTS 1
-#define DRIVE_LIMIT 200
+#define DRIVE_LIMIT 96
 
 int SAMPLE_RATE = 25; //25, 50, 100, 200, 400, 800, 1600 Hz
 int LEDBLINK_MS = 1000;
@@ -52,7 +52,7 @@ float accelScale, gyroScale;
 float accelRange, gyroRange;
 
 // PID for yaw
-float Kp = 1.8, Ki = 0., Kd = 1.5;
+float Kp = 3.5, Ki = 0.1, Kd = 16.0;
 float plant_state;
 int control_effort;
 float setpoint = 0.;
@@ -62,8 +62,8 @@ float P = 0;
 float I = 0;
 float D = 0;
 float tan_filt = 1.;
-int upper_limit = 255, lower_limit = -255;
-float windup_limit = 255.;
+int upper_limit = 48, lower_limit = -48;
+float windup_limit = 48.;
 float error[3] = {0.,0.,0.}, filtered_error[3] = {0.,0.,0.}, error_deriv[3] = {0.,0.,0.}, filtered_error_deriv[3] = {0.,0.,0.};
 
 //short int oldBatteryLevel = 0;  // last battery level reading from analog input
@@ -99,12 +99,14 @@ void timerSampleValuesIsr()
   while (heading > angle_wrap/2.0)
     heading -= angle_wrap;
 
-  yawValue[0] = short(round(heading));
+  short new_yaw = short(round(heading));
+  if (new_yaw != yawValue[0]) {
+    yawValue[0] = short(round(heading));
+    valueUpdated = true;
+  }
 
   get_control_effort(heading);
   driveMotors();
-  
-  valueUpdated = true;
 }
 
 void driveMotors() {
@@ -157,7 +159,7 @@ void get_control_effort(float yaw) {
   }
   if (fabs(error[0] - error[1]) > angle_wrap/2.0) {
     // The error cross the line opposite to the setpoint
-    Serial.println("Reset");
+    //Serial.println("Reset");
     // filter
     if(error[0] > error[1]) {
       error_deriv[0] = (error[0] - error[1] - angle_wrap)/delta_t * 1.0e6;
@@ -205,7 +207,7 @@ void get_control_effort(float yaw) {
   //Serial.print(" ");
   //Serial.print(D);
   //Serial.print(" ");
-  Serial.println(temp_control);
+  //Serial.println(temp_control);
 
   powers[0] = max(min(-commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
   powers[1] = max(min(commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
@@ -221,8 +223,8 @@ void commandCharacteristicWritten() {
   //Serial.println();
 
   setpoint = float(commands[1]);
-  powers[0] = max(min(-commands[0] + control_effort, 255),-255);
-  powers[1] = max(min(commands[0] + control_effort, 255),-255);
+  powers[0] = max(min(-commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
+  powers[1] = max(min(commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
   powers[2] = commands[2];
   powers[3] = commands[3];
   //power1 = frontCommandChar.value();
@@ -236,7 +238,7 @@ void setup() {
     pinMode(powerPins[i], OUTPUT);
     analogWriteFrequency(powerPins[i],25000);
   }
-  Serial.begin(9600);
+  //Serial.begin(9600);
 
   BLE.begin();
   BLE.setLocalName("BLIMP");
@@ -264,6 +266,15 @@ void setup() {
 
   BLE.advertise();
   //blePeripheral.begin();
+
+  for (int i = 0; i < 4; i++) {
+    powers[i] = 16;
+    driveMotors();
+    delay(200);
+    powers[i] = 0;
+    driveMotors();
+    delay(200);
+  }
 
   accelRange = 2;
   gyroRange = 250;
@@ -345,11 +356,11 @@ void loop() {
     }
     LEDBLINK_MS = 1000;
     // Reset all commands (still have yaw maintaining control)
+    setpoint = float(commands[1]);
     for (int i = 0; i < 4; i++)
       commands[i] = 0;
-    setpoint = float(commands[1]);
-    powers[0] = max(min(-commands[0] + control_effort, 255),-255);
-    powers[1] = max(min(commands[0] + control_effort, 255),-255);
+    powers[0] = max(min(-commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
+    powers[1] = max(min(commands[0] + control_effort, DRIVE_LIMIT),-DRIVE_LIMIT);
     powers[2] = commands[2];
     powers[3] = commands[3];
     driveMotors();
